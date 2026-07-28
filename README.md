@@ -1,81 +1,29 @@
-<h1 align="center">央视频下载器</h1>
-<p align="center" class="shields">
-    <a href="https://github.com/letr007/CCTVVideoDownloader/issues" style="text-decoration:none">
-        <img src="https://img.shields.io/github/issues/letr007/CCTVVideoDownloader?style=for-the-badge" alt="GitHub issues"/>
-    </a>
-    <a href="https://github.com/letr007/CCTVVideoDownloader" style="text-decoration:none" >
-        <img src="https://img.shields.io/github/stars/letr007/CCTVVideoDownloader?style=for-the-badge" alt="GitHub stars"/>
-    </a>
-    <a href="https://github.com/letr007/CCTVVideoDownloader" style="text-decoration:none" >
-        <img src="https://img.shields.io/github/forks/letr007/CCTVVideoDownloader?style=for-the-badge" alt="GitHub forks"/>
-    </a>
-    <a href="https://linux.do" style="text-decoration:none" >
-        <img src="https://img.shields.io/badge/LINUX_DO-社区友链-FFD700?style=for-the-badge" alt="LinuxDo"/>
-    </a>
-</p>
+<h1 align="center">央视网视频下载器</h1>
 
-欢迎使用央视频下载器！该程序允许您从[央视网](https://tv.cctv.com)获取视频内容，并支持多线程处理。以下是该程序的一些主要功能和使用说明。
+欢迎使用央视频下载器！该程序允许您从[央视网](https://tv.cctv.com)获取视频内容。以下是该程序的一些主要功能和使用说明。
 
 ## :white_check_mark:功能特点
 
-- 获取节目列表信息
-- 支持多线程处理
-- 支持从链接中解析视频ID
+- 获取视频标题,时长等内容
+- 解析视频ID并获得加密和非加密流地址
+- 提供下载加密视频和非加密视频的按钮
+- 加密视频下载好后会自动解密,接口类型为 h5e
 
 ## :zap:使用方法
 
-运行程序，从节目列表中选择一个栏目，点击后会自动刷新视频列表，选择一个视频后， 
-将在右侧得到此节目的详细信息，然后您可以进行相关操作。
-
-## :pencil:配置设置
-
-您可以通过`设置`菜单来配置程序的一些参数，包括保存路径、线程数等设置。
-
-## :hammer_and_wrench:构建方式
-
-当前项目以 CMake 作为主要构建方式。
+1. 项目下载成 master.zip 后文件名改成 package.nw.zip
+2. 解压成 package.nw 文件夹
+3. 放到nwjs的SDK里,确保 package.nw 这个文件夹和nw.exe在同一级目录
 
 ### 环境要求
 
-- CMake 3.21+
-- Qt 6.8+（Core / Gui / Widgets / Network）
-- C++17 编译器（Windows: MSVC 2022；macOS/Linux: 系统工具链）
-- 最小静态 FFmpeg 库（用于进程内 TS→MP4 remux；先构建 `third_party/ffmpeg-min`）
+- Windows 10 1809+
 
-### 最小 FFmpeg
+### 特别注意
 
-用于进程内 remux
-
-```bash
-# macOS / Linux
-./scripts/build-ffmpeg-min.sh
-# 产出: third_party/ffmpeg-min/{include,lib}
-
-# Windows (PowerShell, 需要 VS C++ 与 MSYS2/bash)
-powershell -ExecutionPolicy Bypass -File scripts/build-ffmpeg-min-windows.ps1
-```
-
-### 示例配置
-
-```bash
-# macOS / Linux
-cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH="/path/to/qt"
-
-# Windows (VS 2022)
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="qt的msvc路径"
-```
-
-### 构建
-
-```bash
-cmake --build build --config Release
-```
-
-构建完成后，可执行文件位于 `build/`（或 `build/Release/`，视生成器而定）。
-
-## :beers:帮助与反馈
-
-如有任何疑问或建议，请提交[issues](https://github.com/letr007/CCTVVideoDownloader/issues)。
+- 需要在 package.nw 里放一个只包含转封装(remux)功能的 ffmpeg.exe {可以从别的项目中复制}
+- 本地模式调用的ffmpeg.exe必须放在 package.nw 文件夹里
+- 只兼容播放页的路径名是VIDE开头的视频.文章(ARTI)里的单个或多个视频暂未支持
 
 ## :rotating_light: 免责声明  
 
@@ -95,5 +43,3 @@ cmake --build build --config Release
    - 如不同意以上条款，请立即停止使用本工具
 
 ##
-
-<img alt="Star History Chart" src="https://api.star-history.com/svg?repos=letr007/CCTVVideoDownloader&type=Date" />

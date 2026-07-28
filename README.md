@@ -11,8 +11,8 @@
 
 ## :zap:使用方法
 
-1. 项目下载成 master.zip 后文件名改成 package.nw.zip
-2. 解压成 package.nw 文件夹
+1. 项目下载成 main.zip 后文件名改成 package.nw.zip
+2. 解压成 package.nw 文件夹,往里放一个ffmpeg.exe可执行程序,只需要确保包含重封装(remux)功能
 3. 放到nwjs的SDK里,确保 package.nw 这个文件夹和nw.exe在同一级目录
 
 ### 环境要求

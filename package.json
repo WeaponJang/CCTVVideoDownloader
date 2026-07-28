@@ -1,0 +1,15 @@
+{
+  "name": "cctv-video-downloader",
+  "version": "1.0.0",
+  "description": "央视视频下载器 (NW.js版)",
+  "main": "index.html",
+  "window": {
+    "title": "央视视频下载器",
+    "width": 800,
+    "height": 720,
+    "resizable": true,
+    "node-integration": true,
+    "context-isolation": true
+  },
+  "chromium-args": "--user-data-dir=./browser_data"
+}

@@ -660,7 +660,7 @@ startBtn.addEventListener('click', async () => {
   logDiv.innerHTML = '';
 
   const fileNameWithoutExt = path.basename(inputFile, path.extname(inputFile));
-  const clean = s => s.replace(/[\u005c\u002f\u003a\u002a\u003f\u003c\u003e\u007c\u0020\u0022\u0027\u3000\uff02\uff07]/g, '_');
+  const clean = s => s.replace(/[\u005c\u002f\u003a\u002a\u003f\u003c\u003e\u007c\u0020\u0022\u0027\u3000\uff02\uff07《》]/g, '_');
   const safeTitle = clean(fileNameWithoutExt);
   const tempDir = path.join(targetDir, `temp_${safeTitle}`);
   const SEG_DUR = 30;

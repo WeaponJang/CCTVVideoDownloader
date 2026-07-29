@@ -224,7 +224,7 @@
 <div class="toolbar">
     <div>
         <h1>📺 CCTV 视频解析下载器</h1>
-        <div class="subtitle">NW.js 桌面版</div>
+        <div class="subtitle">整合 GreasyFork #558396 · NW.js 桌面版 · 保留原版 API 逻辑</div>
     </div>
     <div class="spacer"></div>
     <button onclick="chooseSaveDir()">📁 保存目录</button>
@@ -353,7 +353,7 @@ function toggleDevTools() {
 
 // 文件名清洗 (照搬油猴脚本的非法字符列表)
 function cleanFilename(s) {
-    return s.replace(/[\u005c\u002f\u003a\u002a\u003f\u003c\u003e\u007c\u0020\u0022\u0027\u3000\uff02\uff07]/g, '_');
+    return s.replace(/[\u005c\u002f\u003a\u002a\u003f\u003c\u003e\u007c\u0020\u0022\u0027\u3000\uff02\uff07《》]/g, '_');
 }
 
 // ============================================================

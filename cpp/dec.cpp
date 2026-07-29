@@ -1,26 +1,28 @@
 // =============================================================================
 // cctv_h5e_decrypt.cpp
-// 纯 C++ 实现的 CCTV hls_h5e (new-mode) MPEG-TS 解密工具
+// pure C++ decrypt for CCTV hls_h5e (new-mode) MPEG-TS
 // =============================================================================
 //
-// 功能:
-//   - 闭合公式计算 type5 步长 F5 和 type1 步长 F1（无查找表）
-//   - Type1 G 变换，支持多头部翻转掩码（01a8xx / 61exxx）
-//   - TEA-16 用于 type5；type25 之前使用 classic 模式回退
-//   - EPB (00 00 03) 网格对齐 + 03 丢弃（与官方 worker 一致）
-//   - MPEG-TS PES 重建，自适应字段填充以处理长度缩减
+// Features:
+//   - Closed-form type5 stride F5 and type1 stride F1 (no lookup tables)
+//   - Type1 G transform with multi-header flip mask (01a8xx / 61exxx)
+//   - TEA-16 for type5; classic mode fallback before type25
+//   - EPB (00 00 03) grid alignment + 03 drop (matches official worker)
+//   - MPEG-TS PES rebuild with adaptation-field stuffing for length shrink
 //
-// 无 WASM、无 VMP 字节码、无网络请求。
+// No WASM, no VMP bytecode, no network.
 //
-// 编译:
-//   c++ -std=c++17 -O2 -o h5e_decrypt cctv_h5e_decrypt.cpp
+// C++ usage:
+//   #include "cctv_h5e_decrypt.cpp"
+//   std::vector<uint8_t> out = cctv_h5e::decrypt_ts_default(data, len);
 //
-// 逆向研究文档，风险自担。
+// CLI (one translation unit):
+//   g++ -std=c++17 -Os -s -o dec dec.cpp
+//
+// Research / reverse-engineering documentation. Use at your own risk.
 // =============================================================================
-
-#ifdef _WIN32
-#include <windows.h>
-#endif
+#define CCTV_H5E_CLI
+#define CCTV_H5E_IMPLEMENTATION
 
 #include <cstdint>
 #include <cstddef>
@@ -31,13 +33,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
-#include <fstream>
-#include <iostream>
 
 namespace cctv_h5e {
 
-// ===== TEA / classic / type5 (EPB 感知) =====
-// 标准 TEA-16，小端序 32 位字，delta = 0x9E3779B9。
+// ===== TEA / classic / type5 (EPB-aware) =====
+// Standard TEA-16, little-endian 32-bit words, delta = 0x9E3779B9.
+// Matches src/cctv_h5e_pure.py tea_encrypt_block / tea_decrypt_block.
 
 inline void tea_encrypt_block(uint8_t out[8], const uint8_t in[8], const uint8_t key[16]) {
     uint32_t v0, v1, k0, k1, k2, k3;
@@ -77,7 +78,7 @@ inline void tea_decrypt_block(uint8_t out[8], const uint8_t in[8], const uint8_t
     std::memcpy(out + 4, &v1, 4);
 }
 
-// 经典布局（无 type25）：密钥@16, 起始=32, 步长=80。
+// Classic layout (no type25): key@16, start=32, stride=80.
 inline void decrypt_classic(uint8_t* nal, size_t len) {
     if (len < 40) return;
     const uint8_t* key = nal + 16;
@@ -87,9 +88,9 @@ inline void decrypt_classic(uint8_t* nal, size_t len) {
     }
 }
 
-// Type5 新模式：密钥@5, 起始=64, 步长 S, EPB 感知（与 type1 相同）。
-// Worker 网格守卫需要逻辑单元起始处有 16 字节；TEA 仅写入 8 字节。
-// 返回可选 EPB 03 丢弃后的新 NAL 长度。
+// Type5 new-mode: key@5, start=64, stride S, EPB-aware (same as type1).
+// Worker grid guard needs 16 bytes at logical cell start; TEA only writes 8.
+// Returns new NAL length after optional EPB 03 drop.
 inline size_t decrypt_type5_new(uint8_t* nal, size_t len, uint32_t stride) {
     if (!nal || len < 21 || stride < 8) return len;
     const uint8_t* key = nal + 5;
@@ -125,10 +126,10 @@ inline bool is_type25_enable(const uint8_t* nal, size_t len) {
     return len >= 4 && (nal[0] & 0x1f) == 25 && nal[2] == 0x01 && nal[3] == 0x09;
 }
 
-// ===== F5 / F1 步长计算 =====
+// ===== F5 / F1 stride =====
 inline constexpr uint16_t kType5F5Base[6] = {160, 192, 224, 256, 288, 320};
 
-// key16: nal+5 处的 16 字节 TEA 密钥（F5 仅使用前 6 字节）。
+// key16: 16-byte TEA key at nal+5 (only first 6 bytes used for F5).
 inline uint32_t type5_stride_f5(const uint8_t* key16) {
     uint32_t le = (uint32_t)key16[0]
                 | ((uint32_t)key16[1] << 8)
@@ -138,7 +139,7 @@ inline uint32_t type5_stride_f5(const uint8_t* key16) {
     return (uint32_t)kType5F5Base[idx] | (uint32_t)key16[idx];
 }
 
-// 便捷函数：带 header+RBSP 的 NAL，需要 len >= 11（前缀 >= 21）。
+// Convenience: NAL with header+RBSP, needs len >= 11 (pref >= 21).
 inline uint32_t type5_stride_from_nal(const uint8_t* nal, size_t len) {
     if (!nal || len < 11) return 0;
     uint8_t key[6];
@@ -152,13 +153,13 @@ inline uint32_t type5_stride_from_nal(const uint8_t* nal, size_t len) {
     return type5_stride_f5(key);
 }
 
-// Type1 F1：与 F5 相同的 BASE/选择逻辑，key = nal[1:7]。
+// Type1 F1: same BASE/select as F5, key = nal[1:7].
 inline uint32_t type1_stride_f1(const uint8_t* nal, size_t len) {
     if (!nal || len < 7) return 0;
     return type5_stride_f5(nal + 1);
 }
 
-// ===== Type1 G + EPB 辅助函数 =====
+// ===== Type1 G + EPB helpers =====
 inline int type1_fbit(uint32_t W) {
     const int w0  = (W >> 0)  & 1;
     const int w8  = (W >> 8)  & 1;
@@ -180,7 +181,7 @@ inline bool type1_is_B_step(int s) {
     return s == 2 || s == 8 || s == 9 || s == 10;
 }
 
-// 根据 NAL 头部确定需要翻转的步长掩码。
+// Bitmask of steps to invert Fbit (bit s set => flip step s).
 inline uint16_t type1_flip_mask_from_header(const uint8_t hdr[3]) {
     const uint8_t b0 = hdr[0], b1 = hdr[1], b2 = hdr[2];
     uint16_t m = 0;
@@ -209,8 +210,8 @@ inline uint16_t type1_flip_mask_from_header(const uint8_t hdr[3]) {
         if ((b2 >> 2) & 1) setb(15);
         return m;
     }
-    // 切片头部族：nal_type=1 且 b1 高半字节为 0x9
-    // （41 9a/9b, 01 9e/9f, … — 垂直/移动 h5e）。
+    // Slice-header family: nal_type=1 and b1 high nibble 0x9
+    // (41 9a/9b, 01 9e/9f, … — vertical / mobile h5e).
     if ((b0 & 0x1f) == 1 && (b1 & 0xf0) == 0x90) {
         if ((b2 >> 7) & 1) setb(0);
         if ((b2 >> 6) & 1) setb(1);
@@ -226,7 +227,7 @@ inline uint16_t type1_flip_mask_from_header(const uint8_t hdr[3]) {
         if ((b1 >> 0) & 1) setb(15);
         return m;
     }
-    // 未知族：无翻转（与 61e020 仅核心一致）。
+    // Unknown family: no flips (same as 61e020 core only).
     return 0;
 }
 
@@ -243,7 +244,7 @@ inline uint16_t type1_G_flips(uint16_t X, uint16_t Y, uint16_t flip_mask) {
 }
 
 inline uint16_t type1_G(uint16_t X, uint16_t Y) {
-    // 头部 61e020 / 空翻转集。
+    // Header 61e020 / empty flip set.
     return type1_G_flips(X, Y, 0);
 }
 
@@ -271,7 +272,7 @@ inline void type1_decrypt_block_nal(uint8_t blk[4], const uint8_t nal_hdr[3]) {
     blk[3] = (uint8_t)((X >> 8) & 0xFF);
 }
 
-// 收集 EPB 位置（00 00 03 的起始位置）。
+// Collect EPB positions (start of 00 00 03).
 inline void collect_epb_positions(const uint8_t* nal, size_t len,
                                   std::vector<size_t>& epbs) {
     epbs.clear();
@@ -281,13 +282,23 @@ inline void collect_epb_positions(const uint8_t* nal, size_t len,
     }
 }
 
-// 丢弃每个仍存在的 EPB 的 0x03（从末尾开始）。返回新长度。
+// Count EPBs with start index strictly before `o`.
+inline size_t epb_adj_before(const std::vector<size_t>& epbs, size_t o) {
+    size_t n = 0;
+    for (size_t e : epbs)
+        if (e < o) n++;
+        else break;
+    return n;
+}
+
+// Drop the 0x03 of each still-present EPB (from the end). Returns new length.
 inline size_t drop_epb_03(uint8_t* nal, size_t len, const std::vector<size_t>& epbs) {
     if (!nal) return len;
     size_t nlen = len;
     for (auto it = epbs.rbegin(); it != epbs.rend(); ++it) {
         size_t e = *it;
         if (e + 2 < nlen && nal[e] == 0 && nal[e + 1] == 0 && nal[e + 2] == 3) {
+            // delete byte at e+2
             std::memmove(nal + e + 2, nal + e + 3, nlen - (e + 3));
             nlen--;
         }
@@ -295,9 +306,9 @@ inline size_t drop_epb_03(uint8_t* nal, size_t len, const std::vector<size_t>& e
     return nlen;
 }
 
-// 网格守卫：即使在 RBSP 单元起始处需要 ``guard`` 字节剩余（默认 17），
-// 也仅重写 4 字节。通过 RBSP→EBSP 映射获取单元字节（跳过 EPB 0x03）；
-// 然后丢弃仍完整的 0x03。返回新 NAL 长度。
+// Grid guard: require ``guard`` bytes remaining at RBSP cell start (default 17)
+// even though only 4 bytes are rewritten. Cell bytes via RBSP→EBSP map
+// (skip EPB 0x03); then drop still-intact 0x03. Returns new NAL length.
 inline size_t decrypt_type1_new(uint8_t* nal, size_t len, uint32_t stride = 511,
                                 size_t start = 64, size_t guard = 17) {
     if (!nal || stride < 4 || len < 3) return len;
@@ -332,14 +343,14 @@ inline size_t decrypt_type1_new(uint8_t* nal, size_t len, uint32_t stride = 511,
     return drop_epb_03(nal, len, epbs);
 }
 
-// ===== 会话管理 =====
+// ===== Session =====
 
-// 会话：type25 启用新模式；步长 F5/F1 仅使用闭合公式。
+// Session: type25 enables new-mode; strides F5/F1 closed form only.
 struct Session {
     bool new_mode = false;
     size_t type1_start = 64;
     size_t type1_guard = 17;
-    // Worker 对短于此长度的 type1 NAL 不做处理（无网格，无 EPB 丢弃）。
+    // Worker leaves type1 NALs shorter than this untouched (no grid, no EPB drop).
     size_t type1_min_len = 129;
 
     uint32_t resolve_type5_stride(const uint8_t* nal, size_t len) const {
@@ -381,12 +392,12 @@ struct Session {
 };
 
 // ===== MPEG-TS =====
-// 展开一个 TS 包的 AF 填充；返回从载荷中偷取的字节数。
+// Expand AF stuffing on one TS packet; return bytes stolen from payload.
 inline size_t expand_af_steal(uint8_t* data, size_t len, size_t pkt_off, size_t need) {
     if (!data || need == 0 || pkt_off + 188 > len) return 0;
     int afc = (data[pkt_off + 3] & 0x30) >> 4;
     if (afc == 1) {
-        // 仅载荷 → 引入 AF。af_len = need - 1。
+        // payload only → introduce AF. af_len = need - 1 (see Python notes).
         if (need < 1) return 0;
         size_t af_len = need - 1;
         if (af_len > 182) af_len = 182;
@@ -396,7 +407,7 @@ inline size_t expand_af_steal(uint8_t* data, size_t len, size_t pkt_off, size_t 
         data[pkt_off + 3] = (uint8_t)((data[pkt_off + 3] & 0xCF) | 0x30);  // afc=3
         data[pkt_off + 4] = (uint8_t)af_len;
         if (af_len > 0) {
-            data[pkt_off + 5] = 0x00;  // 标志位
+            data[pkt_off + 5] = 0x00;  // flags
             for (size_t i = 1; i < af_len; i++) data[pkt_off + 5 + i] = 0xFF;
         }
         size_t new_pl = 184 - steal;
@@ -417,7 +428,7 @@ inline size_t expand_af_steal(uint8_t* data, size_t len, size_t pkt_off, size_t 
         size_t new_af_len = af_len + add;
         uint8_t old_payload[184];
         std::memcpy(old_payload, data + pkt_off + pi, old_payload_len);
-        // 用 0xFF 扩展 AF 体
+        // extend AF body with 0xFF
         for (size_t i = 0; i < add; i++) data[pkt_off + 5 + af_len + i] = 0xFF;
         data[pkt_off + 4] = (uint8_t)new_af_len;
         size_t new_pl = old_payload_len - add;
@@ -431,13 +442,14 @@ inline size_t expand_af_steal(uint8_t* data, size_t len, size_t pkt_off, size_t 
     return 0;
 }
 
-// 就地解密 TS 缓冲区中的所有视频 NAL。
-// 返回通过 session.on_nal 处理的 NAL 数量。
+// Decrypt all video NALs in a TS buffer in-place.
+// Returns number of NALs passed through session.on_nal.
 inline size_t decrypt_ts_inplace(uint8_t* data, size_t len, Session& session,
                                  uint16_t vpid = 0x100) {
     if (!data || len < 188) return 0;
 
     std::vector<uint8_t> pes;
+    // (packet_off, payload_start_in_packet, payload_len)
     std::vector<std::tuple<size_t, size_t, size_t>> spans;
     size_t nal_count = 0;
 
@@ -457,8 +469,8 @@ inline size_t decrypt_ts_inplace(uint8_t* data, size_t len, Session& session,
         std::vector<uint8_t> pes_hdr(pes.begin(), pes.begin() + (std::ptrdiff_t)base_skip);
         std::vector<uint8_t> es(pes.begin() + (std::ptrdiff_t)base_skip, pes.end());
 
-        // 在 ES 中查找 NAL 起始码
-        std::vector<std::pair<size_t, size_t>> starts;  // (位置, 起始码长度)
+        // Find NAL start codes in ES
+        std::vector<std::pair<size_t, size_t>> starts;  // (pos, sc_len)
         size_t i = 0;
         while (i + 3 < es.size()) {
             if (i + 4 <= es.size() && es[i] == 0 && es[i + 1] == 0 && es[i + 2] == 0 &&
@@ -488,6 +500,7 @@ inline size_t decrypt_ts_inplace(uint8_t* data, size_t len, Session& session,
                 cursor = end;
                 continue;
             }
+            size_t nal_len = end - (pos + sc);
             std::vector<uint8_t> nal(es.begin() + (std::ptrdiff_t)(pos + sc),
                                      es.begin() + (std::ptrdiff_t)end);
             size_t nlen = nal.size();
@@ -511,7 +524,7 @@ inline size_t decrypt_ts_inplace(uint8_t* data, size_t len, Session& session,
                 size_t got = expand_af_steal(data, len, pkt_off, remaining);
                 remaining -= got;
             }
-            // AF 变更后重新计算 spans
+            // recompute spans after AF changes
             std::vector<std::tuple<size_t, size_t, size_t>> new_spans;
             for (auto& sp : spans) {
                 size_t pkt_off = std::get<0>(sp);
@@ -534,10 +547,13 @@ inline size_t decrypt_ts_inplace(uint8_t* data, size_t len, Session& session,
             if (chunk > 0)
                 std::memcpy(data + pkt_off + pi, new_pes.data() + off, chunk);
             if (chunk < pl) {
-                // 残余（如果 AF 吸收成功则很少出现）
+                // residual (should be rare if AF absorb worked)
                 std::memset(data + pkt_off + pi + chunk, 0xFF, pl - chunk);
             }
             off += pl;
+            if (off >= new_pes.size()) {
+                // clear any further payloads already handled by AF shrink
+            }
         }
 
         pes.clear();
@@ -563,7 +579,7 @@ inline size_t decrypt_ts_inplace(uint8_t* data, size_t len, Session& session,
     return nal_count;
 }
 
-// 拷贝方式解密：返回明文 TS。
+// Copy-based decrypt: returns plaintext TS.
 inline std::vector<uint8_t> decrypt_ts(const uint8_t* data, size_t len,
                                        Session& session,
                                        uint16_t vpid = 0x100) {
@@ -572,16 +588,79 @@ inline std::vector<uint8_t> decrypt_ts(const uint8_t* data, size_t len,
     return out;
 }
 
-// 便捷函数：使用默认会话（内嵌表 key05 + head12）解密。
+// Convenience: fresh session with embedded tables (key05 + head12).
 inline std::vector<uint8_t> decrypt_ts_default(const uint8_t* data, size_t len,
                                                uint16_t vpid = 0x100) {
     Session session;
     return decrypt_ts(data, len, session, vpid);
 }
 
+
 }  // namespace cctv_h5e
 
-// ===== CLI 入口 =====
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct cctv_h5e_session cctv_h5e_session;
+
+cctv_h5e_session* cctv_h5e_session_create(void);
+void cctv_h5e_session_destroy(cctv_h5e_session* s);
+void cctv_h5e_session_reset(cctv_h5e_session* s);
+int cctv_h5e_decrypt_nal(cctv_h5e_session* s, uint8_t* nal, size_t* io_nal_len);
+int cctv_h5e_decrypt_ts(cctv_h5e_session* s, uint8_t* ts, size_t ts_len, uint16_t vpid);
+int cctv_h5e_decrypt_ts_alloc(const uint8_t* ts_in, size_t ts_len,
+                              uint8_t** out_ts, size_t* out_len, uint16_t vpid);
+void cctv_h5e_free(void* p);
+const char* cctv_h5e_version(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#if defined(CCTV_H5E_IMPLEMENTATION)
+
+struct cctv_h5e_session {
+    cctv_h5e::Session impl;
+};
+
+cctv_h5e_session* cctv_h5e_session_create(void) {
+    return new cctv_h5e_session();
+}
+void cctv_h5e_session_destroy(cctv_h5e_session* s) { delete s; }
+void cctv_h5e_session_reset(cctv_h5e_session* s) {
+    if (s) s->impl.reset();
+}
+int cctv_h5e_decrypt_nal(cctv_h5e_session* s, uint8_t* nal, size_t* io_nal_len) {
+    if (!s || !nal || !io_nal_len) return -1;
+    s->impl.on_nal(nal, io_nal_len);
+    return 0;
+}
+int cctv_h5e_decrypt_ts(cctv_h5e_session* s, uint8_t* ts, size_t ts_len, uint16_t vpid) {
+    if (!s || !ts) return -1;
+    return (int)cctv_h5e::decrypt_ts_inplace(ts, ts_len, s->impl, vpid);
+}
+int cctv_h5e_decrypt_ts_alloc(const uint8_t* ts_in, size_t ts_len,
+                              uint8_t** out_ts, size_t* out_len, uint16_t vpid) {
+    if (!ts_in || !out_ts || !out_len) return -1;
+    auto v = cctv_h5e::decrypt_ts_default(ts_in, ts_len, vpid);
+    *out_len = v.size();
+    *out_ts = (uint8_t*)std::malloc(v.empty() ? 1 : v.size());
+    if (!*out_ts) return -1;
+    if (!v.empty()) std::memcpy(*out_ts, v.data(), v.size());
+    return 0;
+}
+void cctv_h5e_free(void* p) { std::free(p); }
+const char* cctv_h5e_version(void) {
+    return "cctv_h5e pure F5/F1+EPB+AF 1.0 (2026-07-23)";
+}
+
+#endif
+
+#if defined(CCTV_H5E_CLI)
+#include <fstream>
+#include <iostream>
+#include <vector>
 
 static std::vector<uint8_t> h5e_read_all(const char* path) {
     std::ifstream f(path, std::ios::binary);
@@ -596,52 +675,41 @@ static std::vector<uint8_t> h5e_read_all(const char* path) {
 }
 
 int main(int argc, char** argv) {
-    // Windows 下自动设置控制台代码页为 UTF-8
-#ifdef _WIN32
-    SetConsoleOutputCP(65001);
-    SetConsoleCP(65001);
-#endif
-
+    const char* ver = cctv_h5e_version();
     if (argc < 3) {
         std::fprintf(stderr,
-            "cctv_h5e_decrypt — 纯 C++ hls_h5e TS 解密工具\n"
-            "  版本: cctv_h5e pure F5/F1+EPB+AF 1.0 (2026-07-23)\n"
-            "\n"
-            "用法: %s <加密.ts> <输出.ts> [--pid 0x100]\n"
-            "\n"
-            "参数:\n"
-            "  <加密.ts>   输入的加密 TS 文件路径\n"
-            "  <输出.ts>   解密后的输出 TS 文件路径\n"
-            "  --pid       视频 PID（默认 0x100）\n",
-            argv[0]);
+            "cctv_h5e_decrypt — pure C++ hls_h5e TS decrypt\n"
+            "  %s\n"
+            "Usage: %s <enc.ts> <out.ts> [--pid 0x100]\n",
+            ver, argv[0]);
         return 1;
     }
-
     uint16_t vpid = 0x100;
     for (int i = 3; i < argc; i++) {
         if (std::string(argv[i]) == "--pid" && i + 1 < argc)
             vpid = (uint16_t)std::strtoul(argv[++i], nullptr, 0);
     }
-
     auto enc = h5e_read_all(argv[1]);
     if (enc.empty()) {
-        std::fprintf(stderr, "错误: 无法读取文件 %s\n", argv[1]);
+        std::fprintf(stderr, "cannot read %s\n", argv[1]);
         return 1;
     }
-
-    auto out = cctv_h5e::decrypt_ts_default(enc.data(), enc.size(), vpid);
-    if (out.empty()) {
-        std::fprintf(stderr, "错误: 解密失败，输出为空\n");
+    uint8_t* out = nullptr;
+    size_t out_len = 0;
+    int rc = cctv_h5e_decrypt_ts_alloc(enc.data(), enc.size(), &out, &out_len, vpid);
+    if (rc != 0 || !out) {
+        std::fprintf(stderr, "decrypt failed rc=%d\n", rc);
         return 1;
     }
-
     std::ofstream of(argv[2], std::ios::binary);
     if (!of) {
-        std::fprintf(stderr, "错误: 无法写入文件 %s\n", argv[2]);
+        cctv_h5e_free(out);
+        std::fprintf(stderr, "cannot write %s\n", argv[2]);
         return 1;
     }
-    of.write(reinterpret_cast<char*>(out.data()), (std::streamsize)out.size());
-
-    std::fprintf(stderr, "完成: %zu 字节 -> %s\n", out.size(), argv[2]);
+    of.write(reinterpret_cast<char*>(out), (std::streamsize)out_len);
+    cctv_h5e_free(out);
+    std::fprintf(stderr, "ok: %zu bytes -> %s (%s)\n", out_len, argv[2], ver);
     return 0;
 }
+#endif

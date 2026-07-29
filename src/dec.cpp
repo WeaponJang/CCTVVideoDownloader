@@ -23,7 +23,9 @@
 // =============================================================================
 #define CCTV_H5E_CLI
 #define CCTV_H5E_IMPLEMENTATION
-
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -675,6 +677,10 @@ static std::vector<uint8_t> h5e_read_all(const char* path) {
 }
 
 int main(int argc, char** argv) {
+	#ifdef _WIN32
+		SetConsoleOutputCP(CP_UTF8);  // 设置控制台输出为 UTF-8
+		SetConsoleCP(CP_UTF8);        // 设置控制台输入为 UTF-8
+	#endif
     const char* ver = cctv_h5e_version();
     if (argc < 3) {
         std::fprintf(stderr,

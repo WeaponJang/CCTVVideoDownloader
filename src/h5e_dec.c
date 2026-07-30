@@ -26,9 +26,6 @@
 
 #define CCTV_H5E_CLI
 #define CCTV_H5E_IMPLEMENTATION
-#ifdef _WIN32
-#include <windows.h>
-#endif
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -714,10 +711,6 @@ static uint8_t* h5e_read_all(const char* path, size_t* out_size) {
 }
 
 int main(int argc, char** argv) {
-	#ifdef _WIN32
-		SetConsoleOutputCP(CP_UTF8);
-		SetConsoleCP(CP_UTF8);
-	#endif
     const char* ver = cctv_h5e_version();
     if (argc < 3) {
         fprintf(stderr, "cctv_h5e_decrypt — pure C11 hls_h5e TS decrypt\n"

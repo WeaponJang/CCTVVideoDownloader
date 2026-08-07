@@ -3,10 +3,6 @@
 欢迎使用央视频下载器！该程序允许您从[央视网](https://tv.cctv.com)获取视频内容。以下是该程序的一些主要功能和使用说明。
 
 ## :white_check_mark:功能特点
-
-- 获取视频标题,时长等内容
-- 解析视频ID并获得加密和非加密流地址
-- 提供下载加密视频和非加密视频的按钮
 - 加密视频下载好后会自动解密,接口类型为 h5e
 
 ## :zap:使用方法
@@ -14,15 +10,15 @@
 1. 项目下载成 main.zip 后文件名改成 package.nw.zip
 2. 解压成 package.nw 文件夹,往里放一个ffmpeg.exe可执行程序,只需要确保包含重封装(remux)功能
 3. 放到nwjs的SDK里,确保 package.nw 这个文件夹和nw.exe在同一级目录
-
+4. 如果希望用 https://github.com/CharlesPikachu/videodl 里的解密逻辑,需要在package.nw 文件夹 再放一个 node.exe 版本24.0以上
 ### 环境要求
 
 - Windows 10 1809+
 
 ### 特别注意
 
-- 需要在 package.nw 里放一个只包含转封装(remux)功能的 ffmpeg.exe {可以从别的项目中复制}
-- 本地模式调用的ffmpeg.exe必须放在 package.nw 文件夹里
+- 需要在 package.nw 或 主程序文件夹 里放一个只包含转封装(remux)功能的 ffmpeg.exe
+- ffmpeg.exe 必须放在 package.nw 或主程序文件夹里
 - 只兼容播放页的路径名是VIDE开头的视频.文章(ARTI)里的单个或多个视频暂未支持
 
 ## :rotating_light: 免责声明  

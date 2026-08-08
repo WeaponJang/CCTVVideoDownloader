@@ -26,20 +26,27 @@
       <div class="hint">支持域名: cctv.com · cctv.cn · cntv.cn</div>
     </section>
 
-    <!-- 视频信息展示区 -->
-    <section class="video-section" id="videoSection">
-      <div class="video-preview">
-        <img id="videoCover" class="video-cover" style="display:none;" alt="封面">
-        <div class="video-placeholder" id="videoPlaceholder">
-          <div class="placeholder-icon">🎬</div>
-          <div>解析成功后显示封面</div>
-        </div>
+    <!-- 视频信息 -->
+    <section class="result-section" id="videoInfoSection" style="display:none;">
+      <div class="result-header">
+        <span>视频信息</span>
+        <span class="badge" id="apiBadge">-</span>
       </div>
-      <div class="video-details">
-        <div class="video-title" id="videoTitle">等待解析...</div>
-        <div class="video-info" id="videoInfo"></div>
+      <div class="result-body video-info-body">
+        <div class="video-cover-wrap" id="videoCoverWrap" style="display:none;"></div>
+        <div class="video-info-grid" id="videoInfoGrid"></div>
       </div>
     </section>
+
+    <!-- 保存目录 -->
+    <div class="save-dir-row">
+      <label class="input-label">保存到</label>
+      <div class="dir-row">
+        <input type="text" id="saveDirInput" class="dir-input" readonly>
+        <button id="changeDirBtn" class="btn btn-small">更改</button>
+        <button id="openFolderBtn" class="btn btn-small">打开</button>
+      </div>
+    </div>
 
     <!-- 进度条 -->
     <div class="progress-container" id="progressContainer" style="display:none;">
@@ -47,19 +54,15 @@
       <div class="progress-text" id="progressText">0%</div>
     </div>
 
-    <!-- 下载控制区 -->
-    <section class="download-section">
-      <div class="save-dir-row">
-        <label class="input-label">保存到</label>
-        <div class="dir-row">
-          <input type="text" id="saveDirInput" class="dir-input" readonly>
-          <button id="changeDirBtn" class="btn btn-small">更改</button>
-          <button id="openFolderBtn" class="btn btn-small">打开</button>
-        </div>
+    <!-- 清晰度列表 -->
+    <section class="result-section" id="qualitySection" style="display:none;">
+      <div class="result-header">
+        <span>可用清晰度 & 下载</span>
+        <span class="quality-count" id="qualityCount"></span>
       </div>
-      <button id="downloadBtn" class="btn btn-download" disabled>
-        <span class="download-icon">⬇</span> 下载视频
-      </button>
+      <div class="result-body">
+        <div class="quality-list" id="qualityList"></div>
+      </div>
     </section>
 
     <!-- 状态栏 -->

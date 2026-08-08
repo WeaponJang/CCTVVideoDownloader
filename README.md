@@ -10,7 +10,6 @@
 1. 项目下载成 main.zip 后文件名改成 package.nw.zip
 2. 解压成 package.nw 文件夹,往里放一个ffmpeg.exe可执行程序,只需要确保包含重封装(remux)功能
 3. 放到nwjs的SDK里,确保 package.nw 这个文件夹和nw.exe在同一级目录
-4. 如果希望用 https://github.com/CharlesPikachu/videodl 里的解密逻辑,需要在package.nw 文件夹 再放一个 node.exe 版本24.0以上
 ### 环境要求
 
 - Windows 10 1809+

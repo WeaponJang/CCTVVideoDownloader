@@ -4,11 +4,10 @@
  */
 
 // NW.js 混合上下文下可直接 require
-const { parseCCTVVideo, isCCTVUrl } = require('./js/cctv-parser.js');
+const { parseCCTVVideo, isCCTVUrl, buildQualityList } = require('./js/cctv-parser.js');
 const { downloadVideo, findFFmpeg } = require('./js/cctv-downloader.js');
 const path = require('path');
 const fs = require('fs');
-const { shell } = require('nw.gui') || { shell: null };
 
 // 默认下载目录
 const DEFAULT_SAVE_DIR = path.join(
@@ -19,20 +18,25 @@ const DEFAULT_SAVE_DIR = path.join(
 // DOM 元素
 const urlInput = document.getElementById('urlInput');
 const parseBtn = document.getElementById('parseBtn');
-const downloadBtn = document.getElementById('downloadBtn');
-const openFolderBtn = document.getElementById('openFolderBtn');
 const statusArea = document.getElementById('statusArea');
 const logArea = document.getElementById('logArea');
-const videoTitle = document.getElementById('videoTitle');
-const videoCover = document.getElementById('videoCover');
-const videoInfo = document.getElementById('videoInfo');
 const saveDirInput = document.getElementById('saveDirInput');
 const changeDirBtn = document.getElementById('changeDirBtn');
+const openFolderBtn = document.getElementById('openFolderBtn');
 const progressContainer = document.getElementById('progressContainer');
 const progressBar = document.getElementById('progressBar');
 const progressText = document.getElementById('progressText');
 
+// 新增 DOM 元素
+const videoInfoSection = document.getElementById('videoInfoSection');
+const videoInfoGrid = document.getElementById('videoInfoGrid');
+const apiBadge = document.getElementById('apiBadge');
+const qualitySection = document.getElementById('qualitySection');
+const qualityList = document.getElementById('qualityList');
+const qualityCount = document.getElementById('qualityCount');
+
 let currentVideoInfo = null;
+let currentQualities = [];
 let currentSaveDir = DEFAULT_SAVE_DIR;
 let isDownloading = false;
 
@@ -42,12 +46,12 @@ saveDirInput.value = currentSaveDir;
 /**
  * 添加日志
  */
-function addLog(msg) {
+function addLog(msg, type) {
   const time = new Date().toLocaleTimeString();
-  const line = document.createElement('div');
-  line.className = 'log-line';
-  line.innerHTML = `<span class="log-time">[${time}]</span> ${escapeHtml(msg)}`;
-  logArea.appendChild(line);
+  const div = document.createElement('div');
+  div.className = 'log-line' + (type ? ' log-' + type : '');
+  div.innerHTML = `<span class="log-time">[${time}]</span> ${escapeHtml(msg)}`;
+  logArea.appendChild(div);
   logArea.scrollTop = logArea.scrollHeight;
 }
 
@@ -70,12 +74,16 @@ function setStatus(msg, type = 'info') {
  */
 function updateProgress(current, total, extra) {
   progressContainer.style.display = 'block';
-  if (total > 0) {
+  if (total > 0 && current >= 0) {
     const pct = Math.round((current / total) * 100);
     progressBar.style.width = pct + '%';
     progressText.textContent = `${pct}% (${current}/${total})`;
-  } else if (typeof extra === 'number') {
+  } else if (typeof extra === 'string') {
     // ffmpeg 时间进度
+    progressBar.style.width = '100%';
+    progressBar.className = 'progress-bar indeterminate';
+    progressText.textContent = `已处理 ${extra}`;
+  } else if (typeof extra === 'number') {
     const mins = Math.floor(extra / 60);
     const secs = Math.floor(extra % 60);
     progressBar.style.width = '100%';
@@ -88,6 +96,100 @@ function hideProgress() {
   progressContainer.style.display = 'none';
   progressBar.style.width = '0%';
   progressBar.className = 'progress-bar';
+}
+
+/**
+ * 渲染视频信息网格
+ */
+function renderVideoInfo(info) {
+  videoInfoSection.style.display = 'block';
+  videoInfoGrid.innerHTML = '';
+
+  // 封面
+  const coverWrap = document.getElementById('videoCoverWrap');
+  if (info.coverUrl) {
+    coverWrap.innerHTML = `<img class="video-cover-img" src="${escapeHtml(info.coverUrl)}" alt="封面">`;
+    coverWrap.style.display = 'block';
+  } else {
+    coverWrap.innerHTML = '';
+    coverWrap.style.display = 'none';
+  }
+
+  const items = [
+    { label: '标题', value: info.title },
+    { label: 'GUID', value: info.videoId },
+    { label: 'VID', value: info.vid || '-' },
+    { label: '频道', value: info.playChannel || '-' },
+    { label: '时长', value: (() => { const s = Math.ceil(Number(info.duration) || 0); return s > 0 ? `${Math.floor(s / 60)}分${String(s % 60).padStart(2, '0')}秒` : '-'; })() }
+  ];
+
+  for (const item of items) {
+    const div = document.createElement('div');
+    div.className = 'info-item';
+    div.innerHTML = `<div class="info-label">${item.label}</div><div class="info-value">${escapeHtml(item.value)}</div>`;
+    videoInfoGrid.appendChild(div);
+  }
+}
+
+/**
+ * 渲染清晰度列表
+ */
+function renderQualities(qualities) {
+  qualitySection.style.display = 'block';
+  qualityList.innerHTML = '';
+
+  // 按码率降序排序
+  qualities.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+
+  for (let i = 0; i < qualities.length; i++) {
+    const q = qualities[i];
+    const div = document.createElement('div');
+    div.className = 'quality-item';
+
+    const isEnc = q.source === 'bitrate-select' || q.name.includes('h5e-');
+    const encTag = isEnc
+      ? '<span class="q-tag tag-enc">加密</span>'
+      : '<span class="q-tag tag-free">免解密</span>';
+
+    div.innerHTML = `
+      <div class="q-name">${escapeHtml(q.name)} ${encTag}</div>
+      <div class="q-bitrate">${q.bitrate ? q.bitrate + 'k' : '-'}</div>
+      <div class="q-url">${escapeHtml(q.url)}</div>
+      <div class="q-actions">
+        <button class="btn btn-small btn-copy" data-idx="${i}">复制</button>
+        <button class="btn btn-small btn-dl" data-idx="${i}">下载</button>
+      </div>
+    `;
+    qualityList.appendChild(div);
+  }
+
+  qualityCount.textContent = `${qualities.length} 个选项`;
+
+  // 绑定按钮事件
+  qualityList.querySelectorAll('.btn-copy').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.idx);
+      const q = currentQualities[idx];
+      if (q) {
+        // 使用 NW.js 剪贴板
+        try {
+          const gui = require('nw.gui');
+          gui.Clipboard.get().set(q.url, 'text');
+        } catch (e) {
+          // fallback
+          navigator.clipboard && navigator.clipboard.writeText(q.url);
+        }
+        addLog('已复制链接: ' + q.name, 'success');
+      }
+    });
+  });
+
+  qualityList.querySelectorAll('.btn-dl').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.idx);
+      handleDownload(idx);
+    });
+  });
 }
 
 /**
@@ -110,10 +212,10 @@ async function handleParse() {
   addLog('开始解析: ' + url);
 
   // 清空之前的信息
-  videoTitle.textContent = '';
-  videoCover.src = '';
-  videoCover.style.display = 'none';
-  videoInfo.textContent = '';
+  videoInfoSection.style.display = 'none';
+  qualitySection.style.display = 'none';
+  videoInfoGrid.innerHTML = '';
+  qualityList.innerHTML = '';
 
   try {
     currentVideoInfo = await parseCCTVVideo(url, (info) => {
@@ -121,59 +223,63 @@ async function handleParse() {
       setStatus(info.message, 'info');
     });
 
-    // 显示视频信息
-    videoTitle.textContent = currentVideoInfo.title;
-    if (currentVideoInfo.coverUrl) {
-      videoCover.src = currentVideoInfo.coverUrl;
-      videoCover.style.display = 'block';
+    // 渲染视频信息
+    renderVideoInfo(currentVideoInfo);
+
+    // 渲染清晰度列表
+    currentQualities = currentVideoInfo.qualityList || [];
+    if (currentQualities.length > 0) {
+      renderQualities(currentQualities);
+      apiBadge.textContent = currentVideoInfo.isEncrypted ? 'H5E' : 'HLS';
+    } else {
+      addLog('未解析到可用清晰度', 'warn');
     }
 
-    let infoText = `视频ID: ${currentVideoInfo.videoId}`;
-    if (currentVideoInfo.duration) {
-      infoText += ` | 时长: ${currentVideoInfo.duration}`;
-    }
-    infoText += ` | 类型: ${currentVideoInfo.isEncrypted ? '加密流(WASM解密)' : '标准HLS(二进制合并)'}`;
-    videoInfo.textContent = infoText;
-
-    setStatus('解析完成，可以下载', 'success');
+    setStatus('解析完成，请选择清晰度下载', 'success');
     addLog(`解析成功: ${currentVideoInfo.title}`);
-    downloadBtn.disabled = false;
 
   } catch (err) {
     setStatus('解析失败: ' + err.message, 'error');
-    addLog('解析错误: ' + err.message);
+    addLog('解析错误: ' + err.message, 'error');
     currentVideoInfo = null;
-    downloadBtn.disabled = true;
+    currentQualities = [];
   } finally {
     parseBtn.disabled = false;
   }
 }
 
 /**
- * 下载视频
+ * 下载指定清晰度
  */
-async function handleDownload() {
-  if (!currentVideoInfo || isDownloading) return;
+async function handleDownload(qualityIndex) {
+  if (isDownloading) {
+    addLog('已有下载任务在进行中', 'warn');
+    return;
+  }
+
+  const quality = currentQualities[qualityIndex];
+  if (!quality || !currentVideoInfo) return;
 
   isDownloading = true;
-  downloadBtn.disabled = true;
   parseBtn.disabled = true;
+  // 禁用所有下载按钮
+  qualityList.querySelectorAll('.btn-dl').forEach(b => b.disabled = true);
   hideProgress();
 
-  addLog('开始下载...');
+  addLog(`开始下载 [${quality.name}]...`);
   setStatus('下载中...', 'info');
 
   try {
-    const savePath = await downloadVideo(currentVideoInfo, currentSaveDir, {
+    const finalPath = await downloadVideo(quality, currentVideoInfo, currentSaveDir, {
       onProgress: (current, total, time) => {
         updateProgress(current, total, time);
       },
       onLog: (msg) => {
         addLog(msg);
       },
-      onComplete: (finalPath) => {
-        setStatus('下载完成: ' + path.basename(finalPath), 'success');
-        addLog('文件已保存至: ' + finalPath);
+      onComplete: (mp4Path) => {
+        setStatus('下载完成: ' + path.basename(mp4Path), 'success');
+        addLog('文件已保存至: ' + mp4Path, 'success');
       },
       onError: (err) => {
         setStatus('下载失败: ' + err.message, 'error');
@@ -182,11 +288,11 @@ async function handleDownload() {
 
   } catch (err) {
     setStatus('下载失败: ' + err.message, 'error');
-    addLog('下载错误: ' + err.message);
+    addLog('下载错误: ' + err.message, 'error');
   } finally {
     isDownloading = false;
-    downloadBtn.disabled = false;
     parseBtn.disabled = false;
+    qualityList.querySelectorAll('.btn-dl').forEach(b => b.disabled = false);
     hideProgress();
   }
 }
@@ -195,7 +301,6 @@ async function handleDownload() {
  * 更改保存目录
  */
 function handleChangeDir() {
-  // 使用 NW.js 的文件选择对话框
   const chooser = document.createElement('input');
   chooser.type = 'file';
   chooser.setAttribute('nwdirectory', '');
@@ -207,7 +312,7 @@ function handleChangeDir() {
     if (dir) {
       currentSaveDir = dir;
       saveDirInput.value = dir;
-      addLog('保存目录已更改为: ' + dir);
+      addLog('保存目录已更改为: ' + dir, 'success');
     }
   });
 
@@ -224,14 +329,12 @@ function handleOpenFolder() {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  // 使用系统默认方式打开文件夹
   const { exec } = require('child_process');
   exec(`explorer.exe "${dir}"`);
 }
 
 // 绑定事件
 parseBtn.addEventListener('click', handleParse);
-downloadBtn.addEventListener('click', handleDownload);
 changeDirBtn.addEventListener('click', handleChangeDir);
 openFolderBtn.addEventListener('click', handleOpenFolder);
 
@@ -240,9 +343,20 @@ urlInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') handleParse();
 });
 
+// 拖入 URL
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', e => {
+  e.preventDefault();
+  const text = e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('text/uri-list');
+  if (text && text.includes('cctv')) {
+    urlInput.value = text.trim().split('\n')[0];
+    addLog('已拖入 URL: ' + urlInput.value);
+  }
+});
+
 // 初始化状态
 setStatus('就绪 - 请粘贴央视网视频链接');
-addLog('CCTV视频下载器已启动');
+addLog('CCTV 视频下载器已启动');
 addLog('支持域名: cctv.com, cctv.cn, cntv.cn');
 
 // 检查环境
